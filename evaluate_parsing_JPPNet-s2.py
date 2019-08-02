@@ -8,6 +8,7 @@ import scipy.misc
 import cv2
 from PIL import Image
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
+from tqdm import tqdm
 
 import tensorflow as tf
 import numpy as np
@@ -15,25 +16,29 @@ import matplotlib.pyplot as plt
 from utils import *
 from LIP_model import *
 
-N_CLASSES = 20
-INPUT_SIZE = (384, 384)
-DATA_DIRECTORY = './datasets/examples'
-DATA_LIST_PATH = './datasets/examples/list/val.txt'
-NUM_STEPS = 6 # Number of images in the validation set.
-RESTORE_FROM = './checkpoint/JPPNet-s2'
-OUTPUT_DIR = './output/parsing/val'
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
-
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--output', default='output', type=str)
+    parser.add_argument('--data-directory', default='./datasets/examples/201906120600_201906121200_person/', type=str)
+    parser.add_argument('--data-list-path', default='./datasets/examples/list/val.txt', type=str)
+    parser.add_argument('--restore-from', default='./checkpoint/JPPNet-s2', type=str)
+    parser.add_argument('--inres', default='384,384', type=str)
+    parser.add_argument('--num-steps', default=10, type=int)
+    parser.add_argument('--num-classes', default=20, type=int)
+    args, _ = parser.parse_known_args()
+    args.inres = tuple(int(x) for x in args.inres.split(','))
+    
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+
     """Create the model and start the evaluation process."""
     
     # Create queue coordinator.
     coord = tf.train.Coordinator()
-    h, w = INPUT_SIZE
+    h, w = args.inres
     # Load reader.
     with tf.name_scope("create_inputs"):
-        reader = ImageReader(DATA_DIRECTORY, DATA_LIST_PATH, None, False, False, coord)
+        reader = ImageReader(args.data_directory, args.data_list_path, None, False, False, coord)
         image = reader.image
         image_rev = tf.reverse(image, tf.stack([1]))
         image_list = reader.image_list
@@ -45,11 +50,11 @@ def main():
     
     # Create network.
     with tf.variable_scope('', reuse=False):
-        net_100 = JPPNetModel({'data': image_batch}, is_training=False, n_classes=N_CLASSES)
+        net_100 = JPPNetModel({'data': image_batch}, is_training=False, n_classes=args.num_classes)
     with tf.variable_scope('', reuse=True):
-        net_075 = JPPNetModel({'data': image_batch075}, is_training=False, n_classes=N_CLASSES)
+        net_075 = JPPNetModel({'data': image_batch075}, is_training=False, n_classes=args.num_classes)
     with tf.variable_scope('', reuse=True):
-        net_125 = JPPNetModel({'data': image_batch125}, is_training=False, n_classes=N_CLASSES)
+        net_125 = JPPNetModel({'data': image_batch125}, is_training=False, n_classes=args.num_classes)
 
     
     # parsing net
@@ -129,8 +134,8 @@ def main():
     
     # Load weights.
     loader = tf.train.Saver(var_list=restore_var)
-    if RESTORE_FROM is not None:
-        if load(loader, sess, RESTORE_FROM):
+    if args.restore_from is not None:
+        if load(loader, sess, args.restore_from):
             print(" [*] Load SUCCESS")
         else:
             print(" [!] Load failed...")
@@ -140,7 +145,7 @@ def main():
 
 
     # Iterate over training steps.
-    for step in range(NUM_STEPS):
+    for step in tqdm(range(args.num_steps)):
         parsing_ = sess.run(pred_all)
         if step % 100 == 0:
             print('step {:d}'.format(step))
@@ -148,10 +153,10 @@ def main():
         img_split = image_list[step].split('/')
         img_id = img_split[-1][:-4]
 
-        msk = decode_labels(parsing_, num_classes=N_CLASSES)
+        msk = decode_labels(parsing_, num_classes=args.num_classes)
         parsing_im = Image.fromarray(msk[0])
-        parsing_im.save('{}/{}_vis.png'.format(OUTPUT_DIR, img_id))
-        cv2.imwrite('{}/{}.png'.format(OUTPUT_DIR, img_id), parsing_[0,:,:,0])
+        parsing_im.save('{}/{}_vis.png'.format(args.output, img_id))
+        cv2.imwrite('{}/{}.png'.format(args.output, img_id), parsing_[0,:,:,0])
 
     coord.request_stop()
     coord.join(threads)
